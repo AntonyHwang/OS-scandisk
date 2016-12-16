@@ -75,17 +75,16 @@ void follow_dir(uint16_t cluster, int indent,
 	    }
 
 	    if ((dirent->deAttributes & ATTR_VOLUME) != 0) {
-		printf("Volume: %s\n", name);
+            printf("Volume: %s\n", name);
 	    } else if ((dirent->deAttributes & ATTR_DIRECTORY) != 0) {
 	        print_indent(indent);
-		printf("%s (directory)\n", name);
-		file_cluster = getushort(dirent->deStartCluster);
-		follow_dir(file_cluster, indent+2, image_buf, bpb);
+            printf("%s (directory)\n", name);
+            file_cluster = getushort(dirent->deStartCluster);
+            follow_dir(file_cluster, indent+2, image_buf, bpb);
 	    } else {
 		size = getulong(dirent->deFileSize);
 	        print_indent(indent);
-		printf("%s.%s (%u bytes)\n", 
-		       name, extension, size);
+            printf("%s.%s (%u bytes)\n", name, extension, size);
 	    }
 	    dirent++;
 	}
