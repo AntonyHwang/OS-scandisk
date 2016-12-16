@@ -15,27 +15,24 @@
 #include "fat.h"
 #include "dos.h"
 
-void update_used_clusters(int usedClusters[], uint16_t cluster, uint32_t size, uint8_t *image_buf, struct bpb33* bpb) {
+void assign_used_clusters(int nonEmptyClusters[], uint16_t cluster, uint32_t size, uint8_t *image_buf, struct bpb33* bpb)
+{
+    nonEmptyClusters[cluster] = 1;
     
-    int total_sectors = size / bpb->bpbBytesPerSec;
-    int file_clusters = total_sectors / bpb->bpbSecPerClust;
-    int total_clusters = bpb->bpbSectors / bpb->bpbSecPerClust;
-    
-    printf("size: %i\n", size);
-    printf("clusters: %i\n", file_clusters);
-    usedClusters[cluster] = 1;
-    
-    int clusterNum;
-    for (clusterNum = 1; clusterNum <= file_clusters; clusterNum++) {
+    while (1) {
         cluster = get_fat_entry(cluster, image_buf, bpb);
-        usedClusters[cluster] = 1;
-        printf("cluster no: %i\n", cluster);
+        if (is_end_of_file(cluster)) {
+            break;
+        }
+        else {
+            nonEmptyClusters[cluster] = 1;
+        }
     }
 }
 
-void follow_dir(int usedClusters[], uint16_t cluster, uint8_t *image_buf, struct bpb33* bpb)
+void follow_dir(int nonEmptyClusters[], uint16_t cluster, uint8_t *image_buf, struct bpb33* bpb)
 {
-    usedClusters[cluster] = 1;
+    nonEmptyClusters[cluster] = 1;
     struct direntry *dirent;
     int d, i;
     dirent = (struct direntry*)cluster_to_addr(cluster, image_buf, bpb);
@@ -84,17 +81,13 @@ void follow_dir(int usedClusters[], uint16_t cluster, uint8_t *image_buf, struct
             }
             
             if ((dirent->deAttributes & ATTR_VOLUME) != 0) {
-                printf("Volume: %s\n", name);
             } else if ((dirent->deAttributes & ATTR_DIRECTORY) != 0) {
-                printf("%s (directory)\n\n", name);
                 file_cluster = getushort(dirent->deStartCluster);
-                follow_dir(usedClusters, file_cluster, image_buf, bpb);
+                follow_dir(nonEmptyClusters, file_cluster, image_buf, bpb);
             } else {
                 file_cluster = getushort(dirent->deStartCluster);
                 size = getulong(dirent->deFileSize);
-                printf("%s.%s (%u bytes)\n",
-                       name, extension, size);
-                update_used_clusters(usedClusters, file_cluster, size, image_buf, bpb);
+                assign_used_clusters(nonEmptyClusters, file_cluster, size, image_buf, bpb);
             }
             dirent++;
         }
@@ -115,6 +108,48 @@ void usage()
     exit(1);
 }
 
+
+
+void find_nonEmptyClusters(int nonEmptyClusters[], int total_clusters, uint8_t *image_buf, struct bpb33* bpb)
+{
+    int flag = 0;
+    int i;
+    for (i = 0; i < total_clusters; i++) {
+        nonEmptyClusters[i] = 0;
+    }
+    
+    follow_dir(nonEmptyClusters, 0, image_buf, bpb);
+    
+    printf("Unreferenced:");
+    for (i = 2; i < total_clusters; i++) {
+        if (nonEmptyClusters[i] == 0 && get_fat_entry(i, image_buf, bpb) != (FAT12_MASK & CLUST_FREE)) {
+            flag = 1;
+            printf(" %i", i);
+        }
+    }
+    if (flag == 0) {
+        printf("\tNo unreferenced cluster found");
+    }
+    printf("\n");
+}
+
+void get_blocks(int nonEmptyClusters[], int total_clusters, uint8_t *image_buf, struct bpb33* bpb)
+{
+    int blocks = 1;
+    printf("Lost File:");
+    int i;
+    int unrefCluster = get_fat_entry(i, image_buf, bpb);;
+    for (i = 2; i < total_clusters; i++) {
+        if (nonEmptyClusters[i] == 0 && get_fat_entry(i, image_buf, bpb) != (FAT12_MASK & CLUST_FREE)) {
+            while (!is_end_of_file(unrefCluster)) {
+                unrefCluster = get_fat_entry(i, image_buf, bpb);
+                blocks++;
+            }
+        }
+    }
+    printf("\n");
+}
+
 int main(int argc, char** argv)
 {
     uint8_t *image_buf;
@@ -129,31 +164,13 @@ int main(int argc, char** argv)
     
     int total_clusters = bpb->bpbSectors / bpb->bpbSecPerClust;
     int clust_size = bpb->bpbSecPerClust * bpb->bpbBytesPerSec;
-    int used_clusters[total_clusters];
-    printf("total clusters: %i\n", total_clusters);
+    int nonEmptyClusters[total_clusters];
+    //get unreferenced clusters
+    find_nonEmptyClusters(nonEmptyClusters, total_clusters, image_buf, bpb);
+    //get number of blocks
+    get_blocks(nonEmptyClusters, total_clusters, image_buf, bpb);
     
-    int i;
-    
-    for (i = 0; i < total_clusters; i++) {
-        used_clusters[i] = 0;
-    }
-    
-    follow_dir(used_clusters, 0, image_buf, bpb);
-    
-    int shownPrefix = 0;
-    for (i = 2; i < total_clusters; i++) {
-        if (used_clusters[i] == 0 && get_fat_entry(i, image_buf, bpb) != (FAT12_MASK & CLUST_FREE)) {
-            if (!shownPrefix) {
-                printf("Unreferenced:");
-                shownPrefix = 1;
-            }
-            printf(" %i", i);
-        }
-        
-        if (i == total_clusters - 1 && shownPrefix) {
-            printf("\n");
-        }
-    }
+
     
     close(fd);
     exit(0);
